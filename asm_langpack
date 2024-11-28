@@ -1,0 +1,25 @@
+local pack = {}
+
+pack['split'] = '\n'
+
+pack['mode'] = 'asm'
+
+pack['open'] = ' '
+pack['close'] = ' '
+
+pack['seperator'] = ' '
+
+pack['string'] = '"'
+
+--parse
+----------
+--execute
+
+pack['mov'] = 'set'
+pack['MOV'] = 'set'
+pack['ADD'] = 'add'
+pack['_'] = '::'
+pack['section'] = '::'
+
+
+return({"lang",pack})
