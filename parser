@@ -1,0 +1,503 @@
+local Parser = {}
+
+function Parser:Format(code)
+
+	repeat
+
+		code:gsub(code,'  ',' ')
+
+	until not code:find('  ')
+
+	return(code)
+
+end
+
+local execlimit = 500 -- for testing
+
+local SpecialInserts = {
+
+	['Quotes'] = function (txt)
+
+		return(txt:gsub("%'",'"'))
+
+	end;
+
+}
+
+function Parser:Interpret(code,injects)
+
+	local defaults = {['split']=';';['mode']='C';['open']='%(';['close']=')';['seperator']=',';['string']='"'}
+
+	if injects then
+		for _,v in pairs(injects) do
+
+			if v[1] == 'lang' then
+
+				for k,l in pairs(v[2]) do
+
+					defaults[k] = l
+
+				end
+
+			end
+
+		end
+	end
+
+	local comptable = code:split(defaults.split)
+	local executions = 0
+
+	if defaults.mode == 'C' then
+
+		for i,v in ipairs(comptable) do
+
+			if #v < 1 then
+
+				comptable[i] = nil 
+
+			else 
+
+				if v:sub(#v-1,#v) == defaults.close.. defaults.split then
+
+					v = v:sub(1,#v-2)
+
+				elseif v:sub(#v,#v) == defaults.split then
+
+					v = v:sub(1,#v-1)
+
+				end
+
+				if v:sub(#v-1,#v) == defaults.close.. ' ' then
+
+					v = v:sub(1,#v-2)
+
+				elseif v:sub(#v,#v) == defaults.close then
+
+					v = v:sub(1,#v-1)
+
+				end
+
+				if v:find(' ') == 1 then
+
+					v = v:sub(2,#v)
+
+				end
+
+				local astr = v
+				v = {}
+
+				local p1 = astr:find( defaults.open ) or astr:find(' ')
+				v['func'] = astr:sub(1,p1-1):gsub(' ','')
+				astr = astr:sub(p1,#astr)
+
+				local pointer = 0
+				local pointer_q = 0 
+				local pointer_b = 0
+
+				local args = astr:split(defaults.seperator)
+
+				for it,txt in pairs(args) do
+
+					local f1 = txt:find(defaults.string)
+
+					if f1 then
+
+						txt = txt:sub(f1+1)
+						txt = txt:sub(1,txt:find(defaults.string)-1)
+						args[it] = {'txt', txt}
+
+					else
+
+						if txt:find(defaults.open) then txt = txt:sub(2,#txt) end
+						local fmt = txt:gsub(' ','')
+						args[it] = {'data', fmt}
+
+					end
+
+				end
+
+				v['args'] = args
+
+				comptable[i] = v
+
+
+
+			end
+		end
+
+	elseif defaults.mode == 'asm' then
+
+
+		for i,v in ipairs(comptable) do
+
+			if #v < 1 then
+
+				comptable[i] = nil 
+				continue
+
+			end
+
+
+			if v:find("%s") == 1 then
+
+				v = v:sub(2,#v)
+
+			end
+
+			if v:sub(#v,#v) == ' ' then
+
+				v = v:sub(1,#v-1)
+
+			end
+
+			local astr = v
+			v = {}
+
+			local fsep = astr:find( defaults.seperator )
+
+			v['func'] = astr:sub(1,fsep-1)
+
+			local args = astr:sub(fsep+1,#astr):split(defaults.seperator )
+
+			for it,txt in pairs(args) do
+
+				local f1 = txt:find(defaults.string)
+
+				if f1 then
+
+					txt = txt:sub(f1+1)
+					txt = txt:sub(1,txt:find(defaults.string)-1)
+					args[it] = {'txt', txt}
+
+				else
+
+					local fmt = txt:gsub(' ','')
+					args[it] = {'data', fmt}
+
+				end
+
+			end
+
+			v['args'] = args
+
+			comptable[i] = v
+
+		end
+
+
+	elseif defaults.mode == 'lua' then
+
+
+
+	end
+
+
+	return(comptable)
+
+end
+
+
+
+
+function Parser:Execute(code,injects)
+
+	local i = 0
+
+	local env = {
+
+		['print'] = print
+
+	}
+
+	env['::'] = function(line,name)
+
+		env[name] = tonumber(line)
+
+	end;
+
+	env['goto'] = function(name)
+
+		i = env[name]
+
+	end
+
+	env['set'] = function(_,name,value,isNumber)
+
+		env[name] = isNumber and tonumber(value) or value
+
+	end
+
+	env['='] = env['set']
+	
+	env['run'] = function(_,code)
+		
+		Parser:Load(code)
+		
+	end
+	
+	env['ifrun'] = function(_, isTrue,code)
+		
+		if isTrue then
+			
+			Parser:Load(code)
+			
+		end
+		
+	end
+	
+	env['if'] = env['eval']
+	
+	env['and'] = function(_, name, v1, v2)
+		
+		if v1 and v2 then
+			
+			env[name] = true
+			
+		end
+		
+	end
+	
+	env['or'] = function(_, name, v1, v2)
+
+		if v1 or v2 then
+
+			env[name] = true
+
+		end
+
+	end
+	
+	env['xor'] = function(_, name, v1, v2)
+
+		if (v1 or v2) and not (v1 and v2) then
+
+			env[name] = true
+
+		end
+
+	end
+	
+	env['not'] = function(_, name, value)
+		
+		if not value then
+			
+			env[name] = not env[name]
+			
+		else
+			
+			env[name] = not value
+			
+		end
+		
+	end
+
+	env['add'] = function(_,name,value)
+
+		env[name] += tonumber(value)
+
+	end
+
+	env['true'] = true
+
+	env['false'] = false
+
+	env['+'] = env['add']
+
+	env['eval'] = function(_,name,operator,i1,i2)
+
+		if operator == '>' then
+
+			if i1 > i2 then
+
+				env[name] = true
+
+			else
+
+				env[name] = false
+
+			end
+
+		elseif operator == '<' then
+
+			if i1 < i2 then
+
+				env[name] = true
+
+			else
+
+				env[name] = false
+
+			end
+
+		elseif operator == '==' then
+
+			if i1 == i2 then
+
+				env[name] = true
+
+			else
+
+				env[name] = false
+
+			end
+
+		elseif operator == '=' then
+
+			if i1 == i2 then
+
+				env[name] = true
+
+			else
+
+				env[name] = false
+
+			end
+
+		elseif operator == '!=' then
+
+			if i1 ~= i2 then
+
+				env[name] = true
+
+			else
+
+				env[name] = false
+
+			end
+
+		elseif operator == '~=' then
+
+			if i1 ~= i2 then
+
+				env[name] = true
+
+			else
+
+				env[name] = false
+
+			end
+
+		elseif operator == '<=' then
+
+			if i1 <= i2 then
+
+				env[name] = true
+
+			else
+
+				env[name] = false
+
+			end
+
+		elseif operator == '>=' then
+
+			if i1 >= i2 then
+
+				env[name] = true
+
+			else
+
+				env[name] = false
+
+			end
+
+		end
+
+	end
+
+	env['loop'] = function(i,name,amount,...)
+
+		for _ = 1,amount do 
+
+			env[name](i,...)
+
+		end
+
+
+	end
+
+	env['ifgoto'] = function(_,isTrue,line)
+
+		if isTrue then i = line end
+
+	end
+
+	env['jump'] = function(_,line)
+
+		i = line
+
+	end
+
+	env['ifJump'] = function(_,isTrue,line)
+
+		if isTrue then i = line end
+
+	end
+
+	env['tick'] = function()
+
+		env['time'] = os.time()
+
+	end
+
+	if injects then
+
+		for iteration, pack in pairs(injects) do
+
+			if pack[1] == 'lang' then
+
+				for name,value in pairs(pack[2]) do
+
+					env[name] = env[value]
+
+				end
+
+			end
+
+		end
+
+	end
+
+	local x,s = pcall(function()
+
+		local codelength = #code
+
+		repeat
+
+			i += 1
+			local temp = {}
+
+			for th,data in pairs( code[i].args ) do
+
+				if data[1] == 'txt' then
+
+					temp[th] = data[2]
+
+				else
+
+					temp[th] = env[data[2] ]
+
+				end
+
+			end
+
+			local func = env[code[i].func]
+			--print(code[i].func,temp)
+			func(i, table.unpack(temp) )
+
+		until i >= codelength
+
+	end)
+
+	if not x then warn(s,env) end
+
+
+end
+
+function Parser:Load(code,injects)
+
+	Parser:Execute( Parser:Interpret(code,injects), injects )
+
+end
+
+return Parser
